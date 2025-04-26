@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: speech-to-text-app
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn web_app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
+      - key: MAX_UPLOAD_SIZE
+        value: 2000000000  # 2GB in bytes
+    disk:
+      name: data
+      mountPath: /app/uploads
+      sizeGB: 10

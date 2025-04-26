@@ -1,0 +1,28 @@
+fastapi==0.104.1
+uvicorn==0.23.2
+python-multipart==0.0.6
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+pydantic==2.4.2
+sqlalchemy==2.0.22
+psycopg2-binary==2.9.9
+pymongo==4.5.0
+redis==5.0.1
+python-dotenv==1.0.0
+
+# Machine learning and audio processing
+openai-whisper==20231117
+torch==2.1.0
+numpy==1.26.0
+scipy==1.11.3
+librosa==0.10.1
+pydub==0.25.1
+soundfile==0.12.1
+ffmpeg-python==0.2.0
+
+# NLP and text processing
+spacy==3.7.2
+
+# Testing and development
+pytest==7.4.3
+httpx==0.25.0

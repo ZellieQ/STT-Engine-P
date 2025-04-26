@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speech-to-Text Demo</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+        }
+        .transcript-container {
+            max-height: 300px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .segment {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            border-radius: 5px;
+            background-color: #e9ecef;
+        }
+        .segment-time {
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+        .loading-spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 0.2rem solid rgba(0, 123, 255, 0.25);
+            border-right-color: #007bff;
+            border-radius: 50%;
+            animation: spinner 0.75s linear infinite;
+        }
+        @keyframes spinner {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4 text-center">Speech-to-Text Transcription Demo</h1>
+        
+        <div class="row">
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Sample Audio Files</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <select class="form-select" id="sample-select">
+                                <option value="">Select a sample audio file</option>
+                                <!-- Will be populated via API -->
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <audio id="audio-player" controls class="w-100 d-none">
+                                Your browser does not support the audio element.
+                            </audio>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="model-select" class="form-label">Model Size</label>
+                            <select class="form-select" id="model-select">
+                                <option value="tiny" selected>Tiny (Fastest, least accurate)</option>
+                                <option value="base">Base (Good balance)</option>
+                                <option value="small">Small (More accurate, slower)</option>
+                                <option value="medium">Medium (High accuracy, much slower)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-primary" id="simulate-button">
+                                <span id="simulate-spinner" class="loading-spinner d-none"></span>
+                                <span id="simulate-text">Simulate Transcription</span>
+                            </button>
+                            
+                            <button class="btn btn-success" id="run-whisper-button">
+                                <span id="whisper-spinner" class="loading-spinner d-none"></span>
+                                <span id="whisper-text">Run Actual Whisper Model</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5>Transcription Result</h5>
+                        <div>
+                            <span id="processing-time" class="badge bg-info d-none"></span>
+                            <span id="detected-language" class="badge bg-secondary d-none"></span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="transcript-container">
+                            <div id="transcript">
+                                <p class="text-muted text-center">Select a sample audio file and click one of the transcription buttons to see the result here.</p>
+                            </div>
+                            <div id="segments"></div>
+                        </div>
+                        <button class="btn btn-outline-primary" id="copy-button" disabled>Copy to Clipboard</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>About This Demo</h5>
+                    </div>
+                    <div class="card-body">
+                        <p>This demo showcases the speech-to-text transcription capabilities using OpenAI's Whisper model. There are two modes:</p>
+                        <ul>
+                            <li><strong>Simulate Transcription</strong>: This quickly returns a pre-defined transcription for demonstration purposes.</li>
+                            <li><strong>Run Actual Whisper Model</strong>: This runs the actual Whisper model on the selected audio file. This may take some time depending on the model size and audio length.</li>
+                        </ul>
+                        <p>The Whisper model is a state-of-the-art speech recognition model that can transcribe audio in multiple languages with high accuracy.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM elements
+        const sampleSelect = document.getElementById('sample-select');
+        const audioPlayer = document.getElementById('audio-player');
+        const modelSelect = document.getElementById('model-select');
+        const simulateButton = document.getElementById('simulate-button');
+        const simulateSpinner = document.getElementById('simulate-spinner');
+        const simulateText = document.getElementById('simulate-text');
+        const runWhisperButton = document.getElementById('run-whisper-button');
+        const whisperSpinner = document.getElementById('whisper-spinner');
+        const whisperText = document.getElementById('whisper-text');
+        const transcript = document.getElementById('transcript');
+        const segments = document.getElementById('segments');
+        const processingTime = document.getElementById('processing-time');
+        const detectedLanguage = document.getElementById('detected-language');
+        const copyButton = document.getElementById('copy-button');
+        
+        // Fetch sample audio files
+        fetch('/samples')
+            .then(response => response.json())
+            .then(samples => {
+                samples.forEach(sample => {
+                    const option = document.createElement('option');
+                    option.value = sample.name;
+                    option.textContent = sample.name;
+                    sampleSelect.appendChild(option);
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching samples:', error);
+                sampleSelect.innerHTML = '<option value="">No samples available</option>';
+            });
+        
+        // Handle sample selection
+        sampleSelect.addEventListener('change', function() {
+            const sampleName = this.value;
+            if (sampleName) {
+                audioPlayer.src = `/samples/${sampleName}`;
+                audioPlayer.classList.remove('d-none');
+                simulateButton.disabled = false;
+                runWhisperButton.disabled = false;
+            } else {
+                audioPlayer.classList.add('d-none');
+                simulateButton.disabled = true;
+                runWhisperButton.disabled = true;
+            }
+        });
+        
+        // Simulate transcription
+        simulateButton.addEventListener('click', function() {
+            const sampleName = sampleSelect.value;
+            if (!sampleName) {
+                alert('Please select a sample audio file');
+                return;
+            }
+            
+            // Update UI
+            simulateButton.disabled = true;
+            simulateSpinner.classList.remove('d-none');
+            simulateText.textContent = 'Simulating...';
+            transcript.innerHTML = '<p class="text-center"><span class="loading-spinner"></span> Processing audio...</p>';
+            segments.innerHTML = '';
+            processingTime.classList.add('d-none');
+            detectedLanguage.classList.add('d-none');
+            
+            // Send request
+            const formData = new FormData();
+            formData.append('sample_name', sampleName);
+            
+            fetch('/transcribe', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                displayTranscription(data);
+            })
+            .catch(error => {
+                transcript.innerHTML = `<p class="text-danger">Error: ${error.message}</p>`;
+            })
+            .finally(() => {
+                simulateButton.disabled = false;
+                simulateSpinner.classList.add('d-none');
+                simulateText.textContent = 'Simulate Transcription';
+            });
+        });
+        
+        // Run Whisper model
+        runWhisperButton.addEventListener('click', function() {
+            const sampleName = sampleSelect.value;
+            if (!sampleName) {
+                alert('Please select a sample audio file');
+                return;
+            }
+            
+            const modelSize = modelSelect.value;
+            
+            // Update UI
+            runWhisperButton.disabled = true;
+            whisperSpinner.classList.remove('d-none');
+            whisperText.textContent = 'Processing...';
+            transcript.innerHTML = '<p class="text-center"><span class="loading-spinner"></span> Running Whisper model (this may take a while)...</p>';
+            segments.innerHTML = '';
+            processingTime.classList.add('d-none');
+            detectedLanguage.classList.add('d-none');
+            
+            // Send request
+            const formData = new FormData();
+            formData.append('sample_name', sampleName);
+            formData.append('model_size', modelSize);
+            
+            fetch('/run_whisper', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                displayTranscription(data);
+                
+                // Display command output if available
+                if (data.command_output) {
+                    console.log('Command output:', data.command_output);
+                }
+            })
+            .catch(error => {
+                transcript.innerHTML = `<p class="text-danger">Error: ${error.message}</p>`;
+            })
+            .finally(() => {
+                runWhisperButton.disabled = false;
+                whisperSpinner.classList.add('d-none');
+                whisperText.textContent = 'Run Actual Whisper Model';
+            });
+        });
+        
+        copyButton.addEventListener('click', function() {
+            const text = transcript.textContent;
+            navigator.clipboard.writeText(text)
+                .then(() => {
+                    const originalText = copyButton.textContent;
+                    copyButton.textContent = 'Copied!';
+                    setTimeout(() => {
+                        copyButton.textContent = originalText;
+                    }, 2000);
+                })
+                .catch(err => {
+                    console.error('Failed to copy text: ', err);
+                });
+        });
+        
+        function displayTranscription(data) {
+            // Display transcript
+            transcript.textContent = data.text;
+            copyButton.disabled = false;
+            
+            // Display processing time
+            processingTime.textContent = `Processing time: ${data.processing_time.toFixed(2)}s`;
+            processingTime.classList.remove('d-none');
+            
+            // Display detected language
+            detectedLanguage.textContent = `Language: ${data.language}`;
+            detectedLanguage.classList.remove('d-none');
+            
+            // Display segments if available
+            segments.innerHTML = '';
+            if (data.segments && data.segments.length > 0) {
+                data.segments.forEach(segment => {
+                    const segmentElement = document.createElement('div');
+                    segmentElement.className = 'segment';
+                    
+                    const timeElement = document.createElement('div');
+                    timeElement.className = 'segment-time';
+                    timeElement.textContent = `${formatTime(segment.start)} - ${formatTime(segment.end)}`;
+                    
+                    const textElement = document.createElement('div');
+                    textElement.textContent = segment.text;
+                    
+                    segmentElement.appendChild(timeElement);
+                    segmentElement.appendChild(textElement);
+                    segments.appendChild(segmentElement);
+                });
+            }
+        }
+        
+        function formatTime(seconds) {
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = Math.floor(seconds % 60);
+            return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+        }
+    </script>
+</body>
+</html>

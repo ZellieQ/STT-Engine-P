@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcription Viewer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+        }
+        .transcript-container {
+            max-height: 600px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .segment {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            border-radius: 5px;
+            background-color: #e9ecef;
+            transition: background-color 0.3s;
+        }
+        .segment:hover {
+            background-color: #dee2e6;
+        }
+        .segment-time {
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+        .segment-text {
+            margin-top: 0.25rem;
+        }
+        .search-highlight {
+            background-color: #fff3cd;
+            border-radius: 3px;
+            padding: 0 2px;
+        }
+        .current-segment {
+            background-color: #cff4fc;
+            border-left: 4px solid #0dcaf0;
+        }
+        .metadata {
+            margin-bottom: 1rem;
+            padding: 0.5rem;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>Transcription Viewer</h1>
+            <a href="/" class="btn btn-outline-primary">Back to Home</a>
+        </div>
+        
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 id="transcription-title">Transcription</h5>
+                        <div>
+                            <span id="detected-language" class="badge bg-info">Language: Loading...</span>
+                            <span id="duration" class="badge bg-secondary ms-2">Duration: Loading...</span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="metadata" id="metadata">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="input-group mb-3">
+                                        <input type="text" class="form-control" placeholder="Search in transcription..." id="search-input">
+                                        <button class="btn btn-outline-secondary" type="button" id="search-button">Search</button>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 text-end">
+                                    <button class="btn btn-outline-primary" id="copy-button">Copy All</button>
+                                    <button class="btn btn-outline-success ms-2" id="download-button">Download</button>
+                                </div>
+                            </div>
+                            <div id="search-results" class="mt-2 d-none">
+                                <span class="badge bg-primary" id="results-count">0 results</span>
+                                <button class="btn btn-sm btn-outline-secondary ms-2" id="prev-result">Previous</button>
+                                <button class="btn btn-sm btn-outline-secondary ms-2" id="next-result">Next</button>
+                                <button class="btn btn-sm btn-outline-danger ms-2" id="clear-search">Clear</button>
+                            </div>
+                        </div>
+                        
+                        <div class="transcript-container">
+                            <div id="full-transcript" class="mb-4">
+                                <h5>Full Transcription</h5>
+                                <div id="transcript-text" class="p-3 bg-light rounded">Loading transcription...</div>
+                            </div>
+                            
+                            <div id="segments-container">
+                                <h5>Segments with Timestamps</h5>
+                                <div id="segments">
+                                    <p class="text-center text-muted">Loading segments...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Get transcription ID from URL
+        const transcriptionId = window.location.pathname.split('/').pop();
+        
+        // DOM elements
+        const transcriptionTitle = document.getElementById('transcription-title');
+        const detectedLanguage = document.getElementById('detected-language');
+        const duration = document.getElementById('duration');
+        const transcriptText = document.getElementById('transcript-text');
+        const segments = document.getElementById('segments');
+        const copyButton = document.getElementById('copy-button');
+        const downloadButton = document.getElementById('download-button');
+        const searchInput = document.getElementById('search-input');
+        const searchButton = document.getElementById('search-button');
+        const searchResults = document.getElementById('search-results');
+        const resultsCount = document.getElementById('results-count');
+        const prevResult = document.getElementById('prev-result');
+        const nextResult = document.getElementById('next-result');
+        const clearSearch = document.getElementById('clear-search');
+        
+        // Search variables
+        let searchMatches = [];
+        let currentMatchIndex = -1;
+        
+        // Load transcription
+        fetch(`/transcriptions/${transcriptionId}`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Transcription not found');
+                }
+                return response.json();
+            })
+            .then(data => {
+                displayTranscription(data);
+            })
+            .catch(error => {
+                console.error('Error loading transcription:', error);
+                transcriptText.innerHTML = `<p class="text-danger">Error: ${error.message}</p>`;
+                segments.innerHTML = `<p class="text-danger">Error: ${error.message}</p>`;
+            });
+        
+        // Display transcription
+        function displayTranscription(data) {
+            // Update title and metadata
+            transcriptionTitle.textContent = 'Transcription';
+            detectedLanguage.textContent = `Language: ${data.language || 'Unknown'}`;
+            
+            // Calculate duration if segments are available
+            if (data.segments && data.segments.length > 0) {
+                const lastSegment = data.segments[data.segments.length - 1];
+                const durationSeconds = lastSegment.end;
+                const minutes = Math.floor(durationSeconds / 60);
+                const seconds = Math.floor(durationSeconds % 60);
+                duration.textContent = `Duration: ${minutes}m ${seconds}s`;
+            } else {
+                duration.textContent = 'Duration: Unknown';
+            }
+            
+            // Display full transcript
+            transcriptText.textContent = data.text;
+            
+            // Display segments
+            if (data.segments && data.segments.length > 0) {
+                segments.innerHTML = '';
+                
+                data.segments.forEach((segment, index) => {
+                    const segmentElement = document.createElement('div');
+                    segmentElement.className = 'segment';
+                    segmentElement.id = `segment-${index}`;
+                    
+                    const timeElement = document.createElement('div');
+                    timeElement.className = 'segment-time';
+                    
+                    // Format time as MM:SS.ms
+                    const startMin = Math.floor(segment.start / 60);
+                    const startSec = (segment.start % 60).toFixed(2);
+                    const endMin = Math.floor(segment.end / 60);
+                    const endSec = (segment.end % 60).toFixed(2);
+                    
+                    const startFormatted = `${startMin}:${startSec.padStart(5, '0')}`;
+                    const endFormatted = `${endMin}:${endSec.padStart(5, '0')}`;
+                    
+                    timeElement.textContent = `${startFormatted} → ${endFormatted}`;
+                    
+                    const textElement = document.createElement('div');
+                    textElement.className = 'segment-text';
+                    textElement.textContent = segment.text;
+                    
+                    segmentElement.appendChild(timeElement);
+                    segmentElement.appendChild(textElement);
+                    segments.appendChild(segmentElement);
+                });
+            } else {
+                segments.innerHTML = '<p class="text-muted">No segments available</p>';
+            }
+        }
+        
+        // Copy button
+        copyButton.addEventListener('click', function() {
+            navigator.clipboard.writeText(transcriptText.textContent)
+                .then(() => {
+                    const originalText = copyButton.textContent;
+                    copyButton.textContent = 'Copied!';
+                    setTimeout(() => {
+                        copyButton.textContent = originalText;
+                    }, 2000);
+                })
+                .catch(err => {
+                    console.error('Failed to copy text: ', err);
+                });
+        });
+        
+        // Download button
+        downloadButton.addEventListener('click', function() {
+            fetch(`/transcriptions/${transcriptionId}`)
+                .then(response => response.json())
+                .then(data => {
+                    // Create text content
+                    let content = "# Full Transcription\n\n";
+                    content += data.text;
+                    content += "\n\n# Segments with Timestamps\n\n";
+                    
+                    if (data.segments && data.segments.length > 0) {
+                        data.segments.forEach(segment => {
+                            const startMin = Math.floor(segment.start / 60);
+                            const startSec = (segment.start % 60).toFixed(2);
+                            const endMin = Math.floor(segment.end / 60);
+                            const endSec = (segment.end % 60).toFixed(2);
+                            
+                            const startFormatted = `${startMin}:${startSec.padStart(5, '0')}`;
+                            const endFormatted = `${endMin}:${endSec.padStart(5, '0')}`;
+                            
+                            content += `[${startFormatted} → ${endFormatted}] ${segment.text}\n`;
+                        });
+                    }
+                    
+                    // Create download link
+                    const blob = new Blob([content], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'transcription.txt';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                })
+                .catch(error => {
+                    console.error('Error downloading transcription:', error);
+                    alert('Error downloading transcription');
+                });
+        });
+        
+        // Search functionality
+        function performSearch() {
+            const searchTerm = searchInput.value.trim().toLowerCase();
+            if (!searchTerm) return;
+            
+            // Clear previous search
+            clearSearchHighlights();
+            searchMatches = [];
+            currentMatchIndex = -1;
+            
+            // Search in full transcript
+            const fullText = transcriptText.textContent.toLowerCase();
+            let startIndex = 0;
+            let index;
+            
+            while ((index = fullText.indexOf(searchTerm, startIndex)) !== -1) {
+                searchMatches.push({
+                    type: 'full',
+                    index: index,
+                    length: searchTerm.length
+                });
+                startIndex = index + 1;
+            }
+            
+            // Search in segments
+            const segmentElements = document.querySelectorAll('.segment-text');
+            segmentElements.forEach((element, segmentIndex) => {
+                const segmentText = element.textContent.toLowerCase();
+                let segStartIndex = 0;
+                let segIndex;
+                
+                while ((segIndex = segmentText.indexOf(searchTerm, segStartIndex)) !== -1) {
+                    searchMatches.push({
+                        type: 'segment',
+                        segmentIndex: segmentIndex,
+                        index: segIndex,
+                        length: searchTerm.length
+                    });
+                    segStartIndex = segIndex + 1;
+                }
+            });
+            
+            // Update UI
+            resultsCount.textContent = `${searchMatches.length} results`;
+            searchResults.classList.remove('d-none');
+            
+            if (searchMatches.length > 0) {
+                goToMatch(0);
+            }
+        }
+        
+        function goToMatch(index) {
+            if (searchMatches.length === 0) return;
+            
+            // Clear previous highlight
+            if (currentMatchIndex !== -1) {
+                const prevMatch = searchMatches[currentMatchIndex];
+                if (prevMatch.type === 'segment') {
+                    const segmentElement = document.querySelector(`#segment-${prevMatch.segmentIndex}`);
+                    if (segmentElement) {
+                        segmentElement.classList.remove('current-segment');
+                    }
+                }
+            }
+            
+            // Update current index
+            currentMatchIndex = index;
+            
+            // Highlight current match
+            const match = searchMatches[currentMatchIndex];
+            
+            if (match.type === 'segment') {
+                const segmentElement = document.querySelector(`#segment-${match.segmentIndex}`);
+                if (segmentElement) {
+                    segmentElement.classList.add('current-segment');
+                    segmentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            } else {
+                // For full transcript, just scroll to top
+                document.getElementById('full-transcript').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+            
+            // Update results count
+            resultsCount.textContent = `${currentMatchIndex + 1} of ${searchMatches.length} results`;
+        }
+        
+        function clearSearchHighlights() {
+            // Remove all current-segment classes
+            document.querySelectorAll('.segment').forEach(element => {
+                element.classList.remove('current-segment');
+            });
+            
+            // Hide search results
+            searchResults.classList.add('d-none');
+        }
+        
+        // Search button click
+        searchButton.addEventListener('click', performSearch);
+        
+        // Search input enter key
+        searchInput.addEventListener('keyup', function(event) {
+            if (event.key === 'Enter') {
+                performSearch();
+            }
+        });
+        
+        // Previous result button
+        prevResult.addEventListener('click', function() {
+            if (currentMatchIndex > 0) {
+                goToMatch(currentMatchIndex - 1);
+            } else {
+                goToMatch(searchMatches.length - 1);
+            }
+        });
+        
+        // Next result button
+        nextResult.addEventListener('click', function() {
+            if (currentMatchIndex < searchMatches.length - 1) {
+                goToMatch(currentMatchIndex + 1);
+            } else {
+                goToMatch(0);
+            }
+        });
+        
+        // Clear search button
+        clearSearch.addEventListener('click', function() {
+            searchInput.value = '';
+            clearSearchHighlights();
+            searchMatches = [];
+            currentMatchIndex = -1;
+        });
+    </script>
+</body>
+</html>

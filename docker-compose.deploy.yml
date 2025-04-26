@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  stt-app:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./transcriptions:/app/transcriptions
+    environment:
+      - FLASK_ENV=production
+    restart: always
+    
+  # Optional: Add nginx for SSL termination
+  nginx:
+    image: nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - stt-app
+    restart: always

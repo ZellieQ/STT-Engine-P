@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speech-to-Text Transcription</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+        }
+        .transcript-container {
+            max-height: 500px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .segment {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            border-radius: 5px;
+            background-color: #e9ecef;
+        }
+        .segment-time {
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+        .progress-container {
+            margin-top: 20px;
+            margin-bottom: 20px;
+        }
+        .status-badge {
+            font-size: 0.9rem;
+            padding: 0.4rem 0.6rem;
+            margin-left: 10px;
+        }
+        .file-info {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+        .job-item {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .job-item:hover {
+            background-color: #e9ecef;
+        }
+        .job-item.active {
+            background-color: #cff4fc;
+            border-left: 4px solid #0dcaf0;
+        }
+        #drop-area {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            transition: background-color 0.3s;
+        }
+        #drop-area.highlight {
+            background-color: #e9ecef;
+            border-color: #0d6efd;
+        }
+        .loading-spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 0.2rem solid rgba(0, 123, 255, 0.25);
+            border-right-color: #007bff;
+            border-radius: 50%;
+            animation: spinner 0.75s linear infinite;
+        }
+        @keyframes spinner {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4 text-center">Speech-to-Text Transcription</h1>
+        
+        <div class="row">
+            <div class="col-md-4 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Upload Audio/Video</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="drop-area">
+                            <p>Drag & drop audio/video files here or click to select</p>
+                            <input type="file" id="file-input" accept="audio/*,video/*" class="form-control" style="display: none;">
+                            <button id="select-file-btn" class="btn btn-primary">Select File</button>
+                        </div>
+                        
+                        <div id="file-info" class="file-info d-none">
+                            <strong>Selected file:</strong> <span id="file-name"></span>
+                            <br>
+                            <strong>Size:</strong> <span id="file-size"></span>
+                        </div>
+                        
+                        <form id="upload-form">
+                            <div class="mb-3">
+                                <label for="model-select" class="form-label">Model Size</label>
+                                <select class="form-select" id="model-select" name="model_size">
+                                    <option value="tiny">Tiny (Fastest, least accurate)</option>
+                                    <option value="base" selected>Base (Good balance)</option>
+                                    <option value="small">Small (More accurate, slower)</option>
+                                    <option value="medium">Medium (High accuracy, much slower)</option>
+                                </select>
+                                <div class="form-text">Larger models provide better accuracy but take longer to process.</div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="language-select" class="form-label">Language</label>
+                                <select class="form-select" id="language-select" name="language">
+                                    <option value="auto" selected>Auto-detect</option>
+                                    <!-- Will be populated via API -->
+                                </select>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="chunk-size" class="form-label">Chunk Size (minutes)</label>
+                                <input type="number" class="form-control" id="chunk-size" name="chunk_size" value="30" min="5" max="60">
+                                <div class="form-text">For long files, audio will be processed in chunks of this size.</div>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-success w-100" id="upload-button" disabled>
+                                <span id="upload-spinner" class="loading-spinner d-none"></span>
+                                <span id="upload-text">Transcribe</span>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+                
+                <div class="card mt-4">
+                    <div class="card-header">
+                        <h5>Recent Jobs</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="jobs-list">
+                            <p class="text-center text-muted">No recent jobs</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-8 mb-4">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5>Transcription</h5>
+                        <div>
+                            <span id="job-status" class="badge bg-secondary status-badge d-none">Status</span>
+                            <span id="detected-language" class="badge bg-info d-none">Language</span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="progress-container" class="progress-container d-none">
+                            <div class="d-flex justify-content-between mb-1">
+                                <span id="progress-status">Processing...</span>
+                                <span id="progress-percentage">0%</span>
+                            </div>
+                            <div class="progress">
+                                <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                            </div>
+                            <div id="progress-info" class="mt-2 small text-muted"></div>
+                        </div>
+                        
+                        <div class="transcript-container">
+                            <div id="transcript">
+                                <p class="text-muted text-center">Upload an audio or video file to see the transcription here.</p>
+                            </div>
+                            <div id="segments"></div>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between">
+                            <button class="btn btn-outline-primary" id="copy-button" disabled>Copy to Clipboard</button>
+                            <button class="btn btn-outline-success" id="download-button" disabled>Download Transcription</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM elements
+        const dropArea = document.getElementById('drop-area');
+        const fileInput = document.getElementById('file-input');
+        const selectFileBtn = document.getElementById('select-file-btn');
+        const fileInfo = document.getElementById('file-info');
+        const fileName = document.getElementById('file-name');
+        const fileSize = document.getElementById('file-size');
+        const uploadForm = document.getElementById('upload-form');
+        const modelSelect = document.getElementById('model-select');
+        const languageSelect = document.getElementById('language-select');
+        const chunkSize = document.getElementById('chunk-size');
+        const uploadButton = document.getElementById('upload-button');
+        const uploadSpinner = document.getElementById('upload-spinner');
+        const uploadText = document.getElementById('upload-text');
+        const jobsList = document.getElementById('jobs-list');
+        const progressContainer = document.getElementById('progress-container');
+        const progressStatus = document.getElementById('progress-status');
+        const progressPercentage = document.getElementById('progress-percentage');
+        const progressBar = document.getElementById('progress-bar');
+        const progressInfo = document.getElementById('progress-info');
+        const jobStatus = document.getElementById('job-status');
+        const detectedLanguage = document.getElementById('detected-language');
+        const transcript = document.getElementById('transcript');
+        const segments = document.getElementById('segments');
+        const copyButton = document.getElementById('copy-button');
+        const downloadButton = document.getElementById('download-button');
+        
+        // Current job ID
+        let currentJobId = null;
+        let statusCheckInterval = null;
+        
+        // Fetch languages
+        fetch('/languages')
+            .then(response => response.json())
+            .then(languages => {
+                languages.forEach(lang => {
+                    if (lang.code !== 'auto') {
+                        const option = document.createElement('option');
+                        option.value = lang.code;
+                        option.textContent = lang.name;
+                        languageSelect.appendChild(option);
+                    }
+                });
+            });
+        
+        // Fetch recent jobs
+        function fetchJobs() {
+            fetch('/jobs')
+                .then(response => response.json())
+                .then(jobs => {
+                    if (jobs.length === 0) {
+                        jobsList.innerHTML = '<p class="text-center text-muted">No recent jobs</p>';
+                        return;
+                    }
+                    
+                    jobsList.innerHTML = '';
+                    jobs.forEach(job => {
+                        const jobItem = document.createElement('div');
+                        jobItem.className = 'job-item';
+                        if (job.id === currentJobId) {
+                            jobItem.classList.add('active');
+                        }
+                        
+                        let statusBadge = '';
+                        if (job.status === 'completed') {
+                            statusBadge = '<span class="badge bg-success">Completed</span>';
+                        } else if (job.status === 'failed') {
+                            statusBadge = '<span class="badge bg-danger">Failed</span>';
+                        } else if (job.status === 'processing' || job.status === 'transcribing' || job.status === 'extracting_audio') {
+                            statusBadge = '<span class="badge bg-primary">Processing</span>';
+                        } else {
+                            statusBadge = `<span class="badge bg-secondary">${job.status}</span>`;
+                        }
+                        
+                        jobItem.innerHTML = `
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div class="text-truncate" style="max-width: 70%;">${job.filename}</div>
+                                ${statusBadge}
+                            </div>
+                            <div class="small text-muted mt-1">
+                                ${new Date(job.created_at).toLocaleString()}
+                            </div>
+                        `;
+                        
+                        jobItem.addEventListener('click', () => {
+                            document.querySelectorAll('.job-item').forEach(item => item.classList.remove('active'));
+                            jobItem.classList.add('active');
+                            loadJob(job.id);
+                        });
+                        
+                        jobsList.appendChild(jobItem);
+                    });
+                });
+        }
+        
+        // Load job details
+        function loadJob(jobId) {
+            currentJobId = jobId;
+            
+            // Clear any existing interval
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+            }
+            
+            // Check job status
+            checkJobStatus(jobId);
+            
+            // Set up interval to check status regularly for in-progress jobs
+            statusCheckInterval = setInterval(() => {
+                checkJobStatus(jobId);
+            }, 5000);
+        }
+        
+        // Check job status
+        function checkJobStatus(jobId) {
+            fetch(`/status/${jobId}`)
+                .then(response => response.json())
+                .then(data => {
+                    updateJobStatus(data);
+                    
+                    // If job is completed, load the transcription
+                    if (data.status === 'completed') {
+                        loadTranscription(jobId);
+                        
+                        // Clear interval as job is complete
+                        if (statusCheckInterval) {
+                            clearInterval(statusCheckInterval);
+                            statusCheckInterval = null;
+                        }
+                    } else if (data.status === 'failed') {
+                        // Show error message
+                        transcript.innerHTML = `<p class="text-danger">Error: ${data.error || 'Transcription failed'}</p>`;
+                        segments.innerHTML = '';
+                        
+                        // Clear interval as job has failed
+                        if (statusCheckInterval) {
+                            clearInterval(statusCheckInterval);
+                            statusCheckInterval = null;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking job status:', error);
+                });
+        }
+        
+        // Update job status UI
+        function updateJobStatus(data) {
+            // Show progress container
+            progressContainer.classList.remove('d-none');
+            
+            // Update progress bar
+            progressBar.style.width = `${data.progress}%`;
+            progressPercentage.textContent = `${data.progress}%`;
+            
+            // Update status badge
+            jobStatus.textContent = data.status.charAt(0).toUpperCase() + data.status.slice(1);
+            jobStatus.classList.remove('d-none');
+            
+            // Set appropriate status color
+            jobStatus.className = 'badge status-badge';
+            if (data.status === 'completed') {
+                jobStatus.classList.add('bg-success');
+                progressStatus.textContent = 'Completed';
+                progressBar.classList.remove('progress-bar-animated');
+            } else if (data.status === 'failed') {
+                jobStatus.classList.add('bg-danger');
+                progressStatus.textContent = 'Failed';
+                progressBar.classList.remove('progress-bar-animated');
+                progressBar.classList.add('bg-danger');
+            } else if (data.status === 'extracting_audio') {
+                jobStatus.classList.add('bg-info');
+                progressStatus.textContent = 'Extracting Audio...';
+            } else if (data.status === 'transcribing') {
+                jobStatus.classList.add('bg-primary');
+                progressStatus.textContent = 'Transcribing...';
+            } else if (data.status === 'saving') {
+                jobStatus.classList.add('bg-info');
+                progressStatus.textContent = 'Saving Results...';
+            } else {
+                jobStatus.classList.add('bg-secondary');
+                progressStatus.textContent = data.status;
+            }
+            
+            // Update progress info
+            if (data.elapsed_time) {
+                const minutes = Math.floor(data.elapsed_time / 60);
+                const seconds = Math.floor(data.elapsed_time % 60);
+                progressInfo.textContent = `Elapsed time: ${minutes}m ${seconds}s`;
+            }
+            
+            // Update language if available
+            if (data.result && data.result.language) {
+                detectedLanguage.textContent = `Language: ${data.result.language}`;
+                detectedLanguage.classList.remove('d-none');
+            }
+        }
+        
+        // Load transcription
+        function loadTranscription(jobId) {
+            fetch(`/transcriptions/${jobId}`)
+                .then(response => response.json())
+                .then(data => {
+                    displayTranscription(data);
+                })
+                .catch(error => {
+                    console.error('Error loading transcription:', error);
+                    transcript.innerHTML = `<p class="text-danger">Error loading transcription: ${error.message}</p>`;
+                });
+        }
+        
+        // Display transcription
+        function displayTranscription(data) {
+            // Display full text
+            transcript.textContent = data.text;
+            copyButton.disabled = false;
+            downloadButton.disabled = false;
+            
+            // Display segments if available
+            segments.innerHTML = '';
+            if (data.segments && data.segments.length > 0) {
+                data.segments.forEach(segment => {
+                    const segmentElement = document.createElement('div');
+                    segmentElement.className = 'segment';
+                    
+                    const timeElement = document.createElement('div');
+                    timeElement.className = 'segment-time';
+                    timeElement.textContent = `${segment.start_formatted} - ${segment.end_formatted}`;
+                    
+                    const textElement = document.createElement('div');
+                    textElement.textContent = segment.text;
+                    
+                    segmentElement.appendChild(timeElement);
+                    segmentElement.appendChild(textElement);
+                    segments.appendChild(segmentElement);
+                });
+            }
+        }
+        
+        // File input handling
+        selectFileBtn.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        fileInput.addEventListener('change', () => {
+            const file = fileInput.files[0];
+            if (file) {
+                displayFileInfo(file);
+                uploadButton.disabled = false;
+            }
+        });
+        
+        // Drag and drop handling
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, preventDefaults, false);
+        });
+        
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropArea.addEventListener(eventName, highlight, false);
+        });
+        
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, unhighlight, false);
+        });
+        
+        function highlight() {
+            dropArea.classList.add('highlight');
+        }
+        
+        function unhighlight() {
+            dropArea.classList.remove('highlight');
+        }
+        
+        dropArea.addEventListener('drop', handleDrop, false);
+        
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const file = dt.files[0];
+            
+            if (file) {
+                fileInput.files = dt.files;
+                displayFileInfo(file);
+                uploadButton.disabled = false;
+            }
+        }
+        
+        function displayFileInfo(file) {
+            fileName.textContent = file.name;
+            fileSize.textContent = formatFileSize(file.size);
+            fileInfo.classList.remove('d-none');
+        }
+        
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        // Form submission
+        uploadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Please select a file');
+                return;
+            }
+            
+            // Update UI
+            uploadButton.disabled = true;
+            uploadSpinner.classList.remove('d-none');
+            uploadText.textContent = 'Uploading...';
+            
+            // Create FormData
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('model_size', modelSelect.value);
+            formData.append('language', languageSelect.value);
+            formData.append('chunk_size', chunkSize.value);
+            
+            // Send request
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                // Reset form
+                uploadButton.disabled = false;
+                uploadSpinner.classList.add('d-none');
+                uploadText.textContent = 'Transcribe';
+                
+                // Set current job ID
+                currentJobId = data.id;
+                
+                // Show progress container
+                progressContainer.classList.remove('d-none');
+                progressStatus.textContent = 'Processing...';
+                progressPercentage.textContent = '0%';
+                progressBar.style.width = '0%';
+                
+                // Clear transcript
+                transcript.innerHTML = '<p class="text-center">Processing your file. This may take several minutes for large files...</p>';
+                segments.innerHTML = '';
+                
+                // Set up status check interval
+                if (statusCheckInterval) {
+                    clearInterval(statusCheckInterval);
+                }
+                statusCheckInterval = setInterval(() => {
+                    checkJobStatus(data.id);
+                }, 5000);
+                
+                // Refresh jobs list
+                fetchJobs();
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error: ' + error.message);
+                
+                uploadButton.disabled = false;
+                uploadSpinner.classList.add('d-none');
+                uploadText.textContent = 'Transcribe';
+            });
+        });
+        
+        // Copy button
+        copyButton.addEventListener('click', function() {
+            navigator.clipboard.writeText(transcript.textContent)
+                .then(() => {
+                    const originalText = copyButton.textContent;
+                    copyButton.textContent = 'Copied!';
+                    setTimeout(() => {
+                        copyButton.textContent = originalText;
+                    }, 2000);
+                })
+                .catch(err => {
+                    console.error('Failed to copy text: ', err);
+                });
+        });
+        
+        // Download button
+        downloadButton.addEventListener('click', function() {
+            if (!currentJobId) return;
+            
+            fetch(`/transcriptions/${currentJobId}`)
+                .then(response => response.json())
+                .then(data => {
+                    // Create text content
+                    let content = "# Full Transcription\n\n";
+                    content += data.text;
+                    content += "\n\n# Segments with Timestamps\n\n";
+                    
+                    if (data.segments && data.segments.length > 0) {
+                        data.segments.forEach(segment => {
+                            content += `[${segment.start_formatted} --> ${segment.end_formatted}] ${segment.text}\n`;
+                        });
+                    }
+                    
+                    // Create download link
+                    const blob = new Blob([content], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'transcription.txt';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                })
+                .catch(error => {
+                    console.error('Error downloading transcription:', error);
+                    alert('Error downloading transcription');
+                });
+        });
+        
+        // Fetch jobs on page load
+        fetchJobs();
+        
+        // Refresh jobs list periodically
+        setInterval(fetchJobs, 10000);
+    </script>
+</body>
+</html>

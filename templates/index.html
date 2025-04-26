@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speech-to-Text Demo</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+        }
+        .recording-indicator {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background-color: #dc3545;
+            display: inline-block;
+            margin-right: 10px;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        .audio-visualizer {
+            width: 100%;
+            height: 100px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            margin-bottom: 1rem;
+            position: relative;
+            overflow: hidden;
+        }
+        .audio-bar {
+            position: absolute;
+            bottom: 0;
+            width: 5px;
+            background-color: #0d6efd;
+            margin: 0 2px;
+            border-radius: 5px 5px 0 0;
+        }
+        .transcript-container {
+            max-height: 300px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .segment {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            border-radius: 5px;
+            background-color: #e9ecef;
+        }
+        .segment-time {
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+        .loading-spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 0.2rem solid rgba(0, 123, 255, 0.25);
+            border-right-color: #007bff;
+            border-radius: 50%;
+            animation: spinner 0.75s linear infinite;
+        }
+        @keyframes spinner {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4 text-center">Speech-to-Text Transcription Demo</h1>
+        
+        <div class="row">
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Upload Audio File</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="upload-form">
+                            <div class="mb-3">
+                                <label for="file-input" class="form-label">Select Audio File</label>
+                                <input type="file" class="form-control" id="file-input" accept="audio/*">
+                            </div>
+                            <div class="mb-3">
+                                <label for="model-select" class="form-label">Model Size</label>
+                                <select class="form-select" id="model-select">
+                                    <option value="tiny">Tiny (Fastest, least accurate)</option>
+                                    <option value="base" selected>Base (Good balance)</option>
+                                    <option value="small">Small (More accurate, slower)</option>
+                                    <option value="medium">Medium (High accuracy, much slower)</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="language-select" class="form-label">Language</label>
+                                <select class="form-select" id="language-select">
+                                    <option value="auto" selected>Auto-detect</option>
+                                    <!-- Will be populated via API -->
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="upload-button">
+                                <span id="upload-spinner" class="loading-spinner d-none"></span>
+                                <span id="upload-text">Transcribe</span>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Record Audio</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="audio-visualizer" id="visualizer">
+                            <!-- Audio bars will be added here dynamically -->
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-danger" id="record-button">
+                                <span id="recording-indicator" class="recording-indicator d-none"></span>
+                                Start Recording
+                            </button>
+                            <button class="btn btn-primary d-none" id="stop-button">Stop Recording</button>
+                            <button class="btn btn-secondary d-none" id="play-button">Play Recording</button>
+                            <button class="btn btn-success d-none" id="transcribe-button">
+                                <span id="record-spinner" class="loading-spinner d-none"></span>
+                                <span id="transcribe-text">Transcribe Recording</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5>Transcription Result</h5>
+                        <div>
+                            <span id="processing-time" class="badge bg-info d-none"></span>
+                            <span id="detected-language" class="badge bg-secondary d-none"></span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="transcript-container">
+                            <div id="transcript">
+                                <p class="text-muted text-center">Upload an audio file or record your voice to see the transcription here.</p>
+                            </div>
+                            <div id="segments"></div>
+                        </div>
+                        <button class="btn btn-outline-primary" id="copy-button" disabled>Copy to Clipboard</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioBlob;
+        let audioUrl;
+        let audioElement;
+        let visualizerInterval;
+        let isRecording = false;
+        
+        // DOM elements
+        const uploadForm = document.getElementById('upload-form');
+        const fileInput = document.getElementById('file-input');
+        const modelSelect = document.getElementById('model-select');
+        const languageSelect = document.getElementById('language-select');
+        const uploadButton = document.getElementById('upload-button');
+        const uploadSpinner = document.getElementById('upload-spinner');
+        const uploadText = document.getElementById('upload-text');
+        
+        const recordButton = document.getElementById('record-button');
+        const stopButton = document.getElementById('stop-button');
+        const playButton = document.getElementById('play-button');
+        const transcribeButton = document.getElementById('transcribe-button');
+        const recordingIndicator = document.getElementById('recording-indicator');
+        const recordSpinner = document.getElementById('record-spinner');
+        const transcribeText = document.getElementById('transcribe-text');
+        
+        const visualizer = document.getElementById('visualizer');
+        const transcript = document.getElementById('transcript');
+        const segments = document.getElementById('segments');
+        const processingTime = document.getElementById('processing-time');
+        const detectedLanguage = document.getElementById('detected-language');
+        const copyButton = document.getElementById('copy-button');
+        
+        // Fetch languages
+        fetch('/languages')
+            .then(response => response.json())
+            .then(languages => {
+                languages.forEach(lang => {
+                    if (lang.code !== 'auto') {
+                        const option = document.createElement('option');
+                        option.value = lang.code;
+                        option.textContent = lang.name;
+                        languageSelect.appendChild(option);
+                    }
+                });
+            });
+        
+        // Upload form submission
+        uploadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Please select an audio file');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('model_size', modelSelect.value);
+            formData.append('language', languageSelect.value);
+            
+            // Update UI
+            uploadButton.disabled = true;
+            uploadSpinner.classList.remove('d-none');
+            uploadText.textContent = 'Transcribing...';
+            transcript.innerHTML = '<p class="text-center"><span class="loading-spinner"></span> Processing audio...</p>';
+            segments.innerHTML = '';
+            processingTime.classList.add('d-none');
+            detectedLanguage.classList.add('d-none');
+            
+            // Send request
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                displayTranscription(data);
+            })
+            .catch(error => {
+                transcript.innerHTML = `<p class="text-danger">Error: ${error.message}</p>`;
+            })
+            .finally(() => {
+                uploadButton.disabled = false;
+                uploadSpinner.classList.add('d-none');
+                uploadText.textContent = 'Transcribe';
+            });
+        });
+        
+        // Record audio
+        recordButton.addEventListener('click', function() {
+            if (isRecording) return;
+            
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    audioChunks = [];
+                    mediaRecorder = new MediaRecorder(stream);
+                    
+                    mediaRecorder.ondataavailable = e => {
+                        if (e.data.size > 0) {
+                            audioChunks.push(e.data);
+                        }
+                    };
+                    
+                    mediaRecorder.onstop = () => {
+                        audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        audioUrl = URL.createObjectURL(audioBlob);
+                        
+                        if (audioElement) {
+                            audioElement.pause();
+                            audioElement.src = '';
+                        }
+                        
+                        audioElement = new Audio(audioUrl);
+                        
+                        stopButton.classList.add('d-none');
+                        recordButton.classList.remove('d-none');
+                        playButton.classList.remove('d-none');
+                        transcribeButton.classList.remove('d-none');
+                        recordingIndicator.classList.add('d-none');
+                        
+                        clearInterval(visualizerInterval);
+                        isRecording = false;
+                    };
+                    
+                    mediaRecorder.start();
+                    isRecording = true;
+                    
+                    recordButton.classList.add('d-none');
+                    stopButton.classList.remove('d-none');
+                    playButton.classList.add('d-none');
+                    transcribeButton.classList.add('d-none');
+                    recordingIndicator.classList.remove('d-none');
+                    
+                    // Create audio visualizer
+                    visualizer.innerHTML = '';
+                    const barCount = 50;
+                    for (let i = 0; i < barCount; i++) {
+                        const bar = document.createElement('div');
+                        bar.className = 'audio-bar';
+                        bar.style.left = `${(i / barCount) * 100}%`;
+                        visualizer.appendChild(bar);
+                    }
+                    
+                    // Animate visualizer
+                    const bars = visualizer.querySelectorAll('.audio-bar');
+                    visualizerInterval = setInterval(() => {
+                        bars.forEach(bar => {
+                            const height = Math.random() * 100;
+                            bar.style.height = `${height}%`;
+                        });
+                    }, 100);
+                })
+                .catch(error => {
+                    console.error('Error accessing microphone:', error);
+                    alert('Error accessing microphone. Please check your browser permissions.');
+                });
+        });
+        
+        stopButton.addEventListener('click', function() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            }
+        });
+        
+        playButton.addEventListener('click', function() {
+            if (audioElement) {
+                audioElement.play();
+            }
+        });
+        
+        transcribeButton.addEventListener('click', function() {
+            if (!audioBlob) return;
+            
+            const formData = new FormData();
+            formData.append('file', new File([audioBlob], 'recording.wav', { type: 'audio/wav' }));
+            formData.append('model_size', modelSelect.value);
+            formData.append('language', languageSelect.value);
+            
+            // Update UI
+            transcribeButton.disabled = true;
+            recordSpinner.classList.remove('d-none');
+            transcribeText.textContent = 'Transcribing...';
+            transcript.innerHTML = '<p class="text-center"><span class="loading-spinner"></span> Processing audio...</p>';
+            segments.innerHTML = '';
+            processingTime.classList.add('d-none');
+            detectedLanguage.classList.add('d-none');
+            
+            // Send request
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                displayTranscription(data);
+            })
+            .catch(error => {
+                transcript.innerHTML = `<p class="text-danger">Error: ${error.message}</p>`;
+            })
+            .finally(() => {
+                transcribeButton.disabled = false;
+                recordSpinner.classList.add('d-none');
+                transcribeText.textContent = 'Transcribe Recording';
+            });
+        });
+        
+        copyButton.addEventListener('click', function() {
+            const text = transcript.textContent;
+            navigator.clipboard.writeText(text)
+                .then(() => {
+                    const originalText = copyButton.textContent;
+                    copyButton.textContent = 'Copied!';
+                    setTimeout(() => {
+                        copyButton.textContent = originalText;
+                    }, 2000);
+                })
+                .catch(err => {
+                    console.error('Failed to copy text: ', err);
+                });
+        });
+        
+        function displayTranscription(data) {
+            // Display transcript
+            transcript.textContent = data.text;
+            copyButton.disabled = false;
+            
+            // Display processing time
+            processingTime.textContent = `Processing time: ${data.processing_time.toFixed(2)}s`;
+            processingTime.classList.remove('d-none');
+            
+            // Display detected language
+            detectedLanguage.textContent = `Language: ${data.language}`;
+            detectedLanguage.classList.remove('d-none');
+            
+            // Display segments if available
+            segments.innerHTML = '';
+            if (data.segments && data.segments.length > 0) {
+                data.segments.forEach(segment => {
+                    const segmentElement = document.createElement('div');
+                    segmentElement.className = 'segment';
+                    
+                    const timeElement = document.createElement('div');
+                    timeElement.className = 'segment-time';
+                    timeElement.textContent = `${formatTime(segment.start)} - ${formatTime(segment.end)}`;
+                    
+                    const textElement = document.createElement('div');
+                    textElement.textContent = segment.text;
+                    
+                    segmentElement.appendChild(timeElement);
+                    segmentElement.appendChild(textElement);
+                    segments.appendChild(segmentElement);
+                });
+            }
+        }
+        
+        function formatTime(seconds) {
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = Math.floor(seconds % 60);
+            return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+        }
+    </script>
+</body>
+</html>
