@@ -32,6 +32,19 @@ transcriptions/*
 temp/*
 !temp/.gitkeep
 
+# Large files
+*.wav
+*.mp3
+*.mp4
+*.m4a
+*.avi
+*.mov
+*.flac
+*.ogg
+
+# Specific large files
+86556_Valerie_Kadiri_audio.wav
+
 # OS specific
 .DS_Store
 .DS_Store?
