@@ -157,7 +157,48 @@
                             </div>
                             <div id="segments"></div>
                         </div>
-                        <button class="btn btn-outline-primary" id="copy-button" disabled>Copy to Clipboard</button>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-primary" id="copy-button" disabled>Copy to Clipboard</button>
+                            <button class="btn btn-outline-success" id="format-notes-button" disabled>Format as Meeting Notes</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Meeting Notes Section (Initially Hidden) -->
+        <div class="row mt-4 d-none" id="meeting-notes-section">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h5>Meeting Notes</h5>
+                    </div>
+                    <div class="card-body">
+                        <h6>Summary</h6>
+                        <p id="meeting-summary" class="p-2 bg-light rounded"></p>
+                        
+                        <h6>Key Discussion Points</h6>
+                        <ul id="key-points-list" class="list-group mb-3">
+                            <!-- Key points will be added here -->
+                        </ul>
+                        
+                        <h6>Action Items</h6>
+                        <table class="table table-striped" id="action-items-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Action Item</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Action items will be added here -->
+                            </tbody>
+                        </table>
+                        
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-primary" id="copy-notes-button">Copy Notes</button>
+                            <button class="btn btn-outline-secondary" id="export-notes-button">Export as Markdown</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -173,6 +214,8 @@
         let audioElement;
         let visualizerInterval;
         let isRecording = false;
+        let currentTranscriptionId = null;
+        let statusCheckInterval = null;
         
         // DOM elements
         const uploadForm = document.getElementById('upload-form');
@@ -236,6 +279,10 @@
             processingTime.classList.add('d-none');
             detectedLanguage.classList.add('d-none');
             
+            // Hide meeting notes section if visible
+            document.getElementById('meeting-notes-section').classList.add('d-none');
+            document.getElementById('format-notes-button').disabled = true;
+            
             // Send request
             fetch('/upload', {
                 method: 'POST',
@@ -247,12 +294,17 @@
                     throw new Error(data.error);
                 }
                 
-                displayTranscription(data);
+                // If we get a job ID, start polling for status
+                if (data.id) {
+                    currentTranscriptionId = data.id;
+                    startStatusCheck(data.id);
+                } else {
+                    // If we get the full result immediately, display it
+                    displayTranscription(data);
+                }
             })
             .catch(error => {
                 transcript.innerHTML = `<p class="text-danger">Error: ${error.message}</p>`;
-            })
-            .finally(() => {
                 uploadButton.disabled = false;
                 uploadSpinner.classList.add('d-none');
                 uploadText.textContent = 'Transcribe';
@@ -401,14 +453,19 @@
             // Display transcript
             transcript.textContent = data.text;
             copyButton.disabled = false;
+            document.getElementById('format-notes-button').disabled = false;
             
             // Display processing time
-            processingTime.textContent = `Processing time: ${data.processing_time.toFixed(2)}s`;
-            processingTime.classList.remove('d-none');
+            if (data.processing_time) {
+                processingTime.textContent = `Processing time: ${typeof data.processing_time === 'number' ? data.processing_time.toFixed(2) : data.processing_time}s`;
+                processingTime.classList.remove('d-none');
+            }
             
             // Display detected language
-            detectedLanguage.textContent = `Language: ${data.language}`;
-            detectedLanguage.classList.remove('d-none');
+            if (data.language) {
+                detectedLanguage.textContent = `Language: ${data.language}`;
+                detectedLanguage.classList.remove('d-none');
+            }
             
             // Display segments if available
             segments.innerHTML = '';
@@ -436,6 +493,288 @@
             const remainingSeconds = Math.floor(seconds % 60);
             return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
         }
+        
+        // Function to start checking status
+        function startStatusCheck(transcriptionId) {
+            // Clear any existing interval
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+            }
+            
+            // Create progress bar
+            transcript.innerHTML = `
+                <div class="text-center mb-3">
+                    <p>Processing your audio file...</p>
+                    <div class="progress">
+                        <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" style="width: 10%;" aria-valuenow="10" aria-valuemin="0" aria-valuemax="100">10%</div>
+                    </div>
+                    <p id="status-message" class="mt-2">Initializing...</p>
+                </div>
+            `;
+            
+            const progressBar = document.getElementById('progress-bar');
+            const statusMessage = document.getElementById('status-message');
+            
+            // Start checking status
+            statusCheckInterval = setInterval(() => {
+                fetch(`/status/${transcriptionId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        // Update progress bar
+                        const progress = data.progress || 0;
+                        progressBar.style.width = `${progress}%`;
+                        progressBar.setAttribute('aria-valuenow', progress);
+                        progressBar.textContent = `${progress}%`;
+                        
+                        // Update status message
+                        const statusMap = {
+                            'processing': 'Processing audio file...',
+                            'extracting_audio': 'Extracting audio from video...',
+                            'transcribing': 'Transcribing audio...',
+                            'saving': 'Saving transcription...',
+                            'completed': 'Transcription complete!',
+                            'failed': 'Transcription failed'
+                        };
+                        
+                        statusMessage.textContent = statusMap[data.status] || data.status;
+                        
+                        // If completed or failed, stop checking
+                        if (data.status === 'completed') {
+                            clearInterval(statusCheckInterval);
+                            statusCheckInterval = null;
+                            
+                            // Fetch the complete transcription
+                            fetch(`/transcriptions/${transcriptionId}`)
+                                .then(response => response.json())
+                                .then(transcriptionData => {
+                                    displayTranscription(transcriptionData);
+                                    
+                                    // Enable UI elements
+                                    uploadButton.disabled = false;
+                                    uploadSpinner.classList.add('d-none');
+                                    uploadText.textContent = 'Transcribe';
+                                })
+                                .catch(error => {
+                                    console.error('Error fetching transcription:', error);
+                                    transcript.innerHTML = `<p class="text-danger">Error fetching transcription: ${error.message}</p>`;
+                                    
+                                    // Enable UI elements
+                                    uploadButton.disabled = false;
+                                    uploadSpinner.classList.add('d-none');
+                                    uploadText.textContent = 'Transcribe';
+                                });
+                        } else if (data.status === 'failed') {
+                            clearInterval(statusCheckInterval);
+                            statusCheckInterval = null;
+                            
+                            // Display error
+                            transcript.innerHTML = `<p class="text-danger">Transcription failed: ${data.error || 'Unknown error'}</p>`;
+                            
+                            // Enable UI elements
+                            uploadButton.disabled = false;
+                            uploadSpinner.classList.add('d-none');
+                            uploadText.textContent = 'Transcribe';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error checking status:', error);
+                    });
+            }, 2000); // Check every 2 seconds
+        }
+        
+        // Format notes button
+        document.getElementById('format-notes-button').addEventListener('click', function() {
+            if (!currentTranscriptionId) {
+                alert('No transcription available to format');
+                return;
+            }
+            
+            // Show loading state
+            this.disabled = true;
+            this.innerHTML = '<span class="loading-spinner"></span> Formatting...';
+            
+            // Fetch meeting notes
+            fetch(`/format_notes/${currentTranscriptionId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    
+                    // Display meeting notes
+                    displayMeetingNotes(data);
+                    
+                    // Reset button
+                    this.disabled = false;
+                    this.textContent = 'Format as Meeting Notes';
+                })
+                .catch(error => {
+                    alert(`Error formatting notes: ${error.message}`);
+                    
+                    // Reset button
+                    this.disabled = false;
+                    this.textContent = 'Format as Meeting Notes';
+                });
+        });
+        
+        // Function to display meeting notes
+        function displayMeetingNotes(notes) {
+            // Show the meeting notes section
+            const notesSection = document.getElementById('meeting-notes-section');
+            notesSection.classList.remove('d-none');
+            
+            // Populate summary
+            document.getElementById('meeting-summary').textContent = notes.summary;
+            
+            // Populate key points
+            const keyPointsList = document.getElementById('key-points-list');
+            keyPointsList.innerHTML = '';
+            
+            if (notes.key_points && notes.key_points.length > 0) {
+                notes.key_points.forEach(point => {
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item';
+                    li.textContent = point;
+                    keyPointsList.appendChild(li);
+                });
+            } else {
+                const li = document.createElement('li');
+                li.className = 'list-group-item text-muted';
+                li.textContent = 'No key points identified';
+                keyPointsList.appendChild(li);
+            }
+            
+            // Populate action items
+            const actionItemsTable = document.getElementById('action-items-table').querySelector('tbody');
+            actionItemsTable.innerHTML = '';
+            
+            if (notes.action_items && notes.action_items.length > 0) {
+                notes.action_items.forEach((item, index) => {
+                    const row = document.createElement('tr');
+                    
+                    const indexCell = document.createElement('td');
+                    indexCell.textContent = index + 1;
+                    
+                    const itemCell = document.createElement('td');
+                    itemCell.textContent = item;
+                    
+                    row.appendChild(indexCell);
+                    row.appendChild(itemCell);
+                    actionItemsTable.appendChild(row);
+                });
+            } else {
+                const row = document.createElement('tr');
+                const cell = document.createElement('td');
+                cell.colSpan = 2;
+                cell.className = 'text-muted text-center';
+                cell.textContent = 'No action items identified';
+                row.appendChild(cell);
+                actionItemsTable.appendChild(row);
+            }
+            
+            // Scroll to the meeting notes section
+            notesSection.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        // Copy notes button
+        document.getElementById('copy-notes-button').addEventListener('click', function() {
+            const summary = document.getElementById('meeting-summary').textContent;
+            
+            // Get key points
+            const keyPoints = [];
+            document.querySelectorAll('#key-points-list li').forEach(li => {
+                if (!li.classList.contains('text-muted')) {
+                    keyPoints.push(li.textContent);
+                }
+            });
+            
+            // Get action items
+            const actionItems = [];
+            document.querySelectorAll('#action-items-table tbody tr').forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 2 && !cells[1].classList.contains('text-muted')) {
+                    actionItems.push(`${cells[0].textContent}. ${cells[1].textContent}`);
+                }
+            });
+            
+            // Format as text
+            let notesText = `# Meeting Notes\n\n`;
+            notesText += `## Summary\n${summary}\n\n`;
+            
+            notesText += `## Key Discussion Points\n`;
+            keyPoints.forEach(point => {
+                notesText += `* ${point}\n`;
+            });
+            notesText += '\n';
+            
+            notesText += `## Action Items\n`;
+            actionItems.forEach(item => {
+                notesText += `* ${item}\n`;
+            });
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(notesText)
+                .then(() => {
+                    const originalText = this.textContent;
+                    this.textContent = 'Copied!';
+                    setTimeout(() => {
+                        this.textContent = originalText;
+                    }, 2000);
+                })
+                .catch(err => {
+                    console.error('Failed to copy notes: ', err);
+                    alert('Failed to copy notes to clipboard');
+                });
+        });
+        
+        // Export notes as markdown
+        document.getElementById('export-notes-button').addEventListener('click', function() {
+            const summary = document.getElementById('meeting-summary').textContent;
+            
+            // Get key points
+            const keyPoints = [];
+            document.querySelectorAll('#key-points-list li').forEach(li => {
+                if (!li.classList.contains('text-muted')) {
+                    keyPoints.push(li.textContent);
+                }
+            });
+            
+            // Get action items
+            const actionItems = [];
+            document.querySelectorAll('#action-items-table tbody tr').forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 2 && !cells[1].classList.contains('text-muted')) {
+                    actionItems.push(`${cells[0].textContent}. ${cells[1].textContent}`);
+                }
+            });
+            
+            // Format as markdown
+            let notesText = `# Meeting Notes\n\n`;
+            notesText += `## Summary\n${summary}\n\n`;
+            
+            notesText += `## Key Discussion Points\n`;
+            keyPoints.forEach(point => {
+                notesText += `* ${point}\n`;
+            });
+            notesText += '\n';
+            
+            notesText += `## Action Items\n`;
+            actionItems.forEach(item => {
+                notesText += `* ${item}\n`;
+            });
+            
+            // Create a blob and download
+            const blob = new Blob([notesText], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `meeting_notes_${new Date().toISOString().split('T')[0]}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
     </script>
 </body>
 </html>

@@ -190,29 +190,80 @@ def format_time(seconds):
 
 def save_transcription(result, output_file):
     """Save transcription to a JSON file"""
-    # Prepare data for JSON
+    # Extract text and segments
     data = {
-        "text": result["text"],
-        "language": result.get("language", "unknown"),
-        "segments": []
+        'text': result.get('text', ''),
+        'segments': result.get('segments', []),
+        'language': result.get('language', ''),
+        'processing_time': result.get('processing_time', 0)
     }
     
-    # Add segments with timestamps
-    if "segments" in result and result["segments"]:
-        for segment in result["segments"]:
-            data["segments"].append({
-                "start": segment["start"],
-                "end": segment["end"],
-                "text": segment["text"],
-                "start_formatted": format_time(segment["start"]),
-                "end_formatted": format_time(segment["end"])
-            })
-    
-    # Save as JSON
+    # Save to file
     with open(output_file, 'w') as f:
         json.dump(data, f, indent=2)
     
     return data
+
+def format_meeting_notes(transcription):
+    """Convert transcription to meeting notes format with summary and key points"""
+    import re
+    from datetime import datetime
+    
+    # If transcription is a string, use it directly
+    if isinstance(transcription, str):
+        text = transcription
+    # If it's a dict with segments, combine them
+    elif isinstance(transcription, dict) and 'segments' in transcription:
+        text = ' '.join([segment['text'] for segment in transcription['segments']])
+    # If it's a dict with text, use that
+    elif isinstance(transcription, dict) and 'text' in transcription:
+        text = transcription['text']
+    else:
+        return {"error": "Invalid transcription format"}
+    
+    # Generate a basic summary (first 200 characters)
+    summary = text[:200] + "..." if len(text) > 200 else text
+    
+    # Extract potential key points (sentences that might be important)
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    key_points = []
+    
+    # Look for sentences that might indicate key points
+    keywords = ['important', 'key', 'must', 'should', 'need to', 'action item', 
+                'takeaway', 'decision', 'agreed', 'conclusion', 'summary']
+    
+    for sentence in sentences:
+        if any(keyword in sentence.lower() for keyword in keywords) and len(sentence) > 20:
+            key_points.append(sentence)
+    
+    # If we didn't find enough key points, take some longer sentences
+    if len(key_points) < 3:
+        longer_sentences = sorted(sentences, key=len, reverse=True)[:5]
+        for sentence in longer_sentences:
+            if sentence not in key_points and len(sentence) > 30:
+                key_points.append(sentence)
+                if len(key_points) >= 3:
+                    break
+    
+    # Extract potential action items (sentences with action verbs)
+    action_items = []
+    action_verbs = ['will', 'shall', 'must', 'need to', 'going to', 'plan to', 
+                   'assign', 'create', 'develop', 'implement', 'complete']
+    
+    for sentence in sentences:
+        if any(verb in sentence.lower() for verb in action_verbs) and len(sentence) > 20:
+            action_items.append(sentence)
+    
+    # Format the meeting notes
+    meeting_notes = {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "summary": summary,
+        "key_points": key_points[:5],  # Limit to top 5 key points
+        "action_items": action_items[:5],  # Limit to top 5 action items
+        "full_transcript": text
+    }
+    
+    return meeting_notes
 
 @app.route('/')
 def index():
@@ -290,80 +341,116 @@ def upload_file():
 def process_file_background(transcription_id, file_path, file_extension, model_size, language, chunk_size):
     """Process file in background thread"""
     try:
-        # Update status
-        update_status(transcription_id, 'extracting_audio', 10)
+        # Update status to processing
+        update_status(transcription_id, "processing", 10)
         
-        # Check if it's a video file that needs audio extraction
-        is_video = file_extension in ['.mp4', '.mov', '.avi', '.mkv', '.webm']
-        
-        if is_video:
-            # Extract audio from video
+        # Extract audio if it's a video file
+        audio_path = file_path
+        if file_extension in ['mp4', 'mov', 'avi', 'mkv', 'webm']:
+            update_status(transcription_id, "extracting_audio", 20)
             audio_path = os.path.join(TEMP_FOLDER, f"{transcription_id}.wav")
-            if not extract_audio(file_path, audio_path):
-                update_status(transcription_id, 'failed', 0, error='Failed to extract audio from video')
+            success = extract_audio(file_path, audio_path)
+            
+            if not success:
+                update_status(transcription_id, "failed", 0, error="Failed to extract audio from video")
                 return
-        else:
-            # Already an audio file
-            audio_path = file_path
         
-        # Update status
-        update_status(transcription_id, 'transcribing', 30)
+        # Update status to transcribing
+        update_status(transcription_id, "transcribing", 30)
         
-        # Transcribe the audio
-        result = transcribe_audio(audio_path, model_size, language, chunk_size)
+        # Transcribe audio
+        start_time = time.time()
+        result = transcribe_audio(audio_path, model_size, language, int(chunk_size))
+        processing_time = time.time() - start_time
         
-        # Save transcription to JSON file
-        update_status(transcription_id, 'saving', 90)
+        # Update status to saving
+        update_status(transcription_id, "saving", 80)
+        
+        # Add processing time to result
+        result['processing_time'] = processing_time
+        
+        # Save transcription
         output_file = os.path.join(TRANSCRIPTION_FOLDER, f"{transcription_id}.json")
-        transcription_data = save_transcription(result, output_file)
+        save_transcription(result, output_file)
         
-        # Clean up temporary files
-        if is_video and os.path.exists(audio_path):
-            os.remove(audio_path)
+        # Generate meeting notes automatically
+        meeting_notes = format_meeting_notes(result)
+        notes_file = os.path.join(TRANSCRIPTION_FOLDER, f"{transcription_id}_notes.json")
+        with open(notes_file, 'w') as f:
+            json.dump(meeting_notes, f, indent=2)
         
-        # Update status to complete
-        update_status(transcription_id, 'completed', 100, result={
-            'language': result.get('language', language),
-            'segments_count': len(result.get('segments', [])),
-            'duration': result.get('segments', [])[-1]['end'] if result.get('segments') else 0
+        # Update status to completed
+        update_status(transcription_id, "completed", 100, result={
+            "text": result.get("text", ""),
+            "language": result.get("language", ""),
+            "processing_time": processing_time,
+            "has_notes": True
         })
         
-        # Update job status
+        # Remove job from active jobs
         if transcription_id in jobs:
-            jobs[transcription_id]['status'] = 'completed'
-            jobs[transcription_id]['end_time'] = time.time()
-    
+            del jobs[transcription_id]
+            
     except Exception as e:
         print(f"Error processing file: {e}")
-        update_status(transcription_id, 'failed', 0, error=str(e))
+        update_status(transcription_id, "failed", 0, error=str(e))
+        
+        # Remove job from active jobs
         if transcription_id in jobs:
-            jobs[transcription_id]['status'] = 'failed'
-            jobs[transcription_id]['error'] = str(e)
+            del jobs[transcription_id]
 
 def update_status(transcription_id, status, progress, error=None, result=None):
     """Update the status file for a transcription job"""
     status_file = os.path.join(TRANSCRIPTION_FOLDER, f"{transcription_id}_status.json")
     
+    # Get current time
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Create or update status file
+    status_data = {
+        "id": transcription_id,
+        "status": status,
+        "progress": progress,
+        "updated_at": now
+    }
+    
+    # Add error message if provided
+    if error:
+        status_data["error"] = str(error)
+    
+    # Add result data if provided
+    if result:
+        status_data["result"] = result
+    
+    # If file exists, update while preserving some fields
     if os.path.exists(status_file):
         with open(status_file, 'r') as f:
-            data = json.load(f)
+            existing_data = json.load(f)
+            
+        # Preserve created_at and original_filename
+        if "created_at" in existing_data:
+            status_data["created_at"] = existing_data["created_at"]
+        if "original_filename" in existing_data:
+            status_data["original_filename"] = existing_data["original_filename"]
+        
+        # Track processing time if we're completing the job
+        if status == "completed" and "created_at" in existing_data:
+            try:
+                created_time = datetime.strptime(existing_data["created_at"], "%Y-%m-%d %H:%M:%S")
+                updated_time = datetime.strptime(now, "%Y-%m-%d %H:%M:%S")
+                processing_time = (updated_time - created_time).total_seconds()
+                status_data["processing_time"] = processing_time
+            except Exception as e:
+                print(f"Error calculating processing time: {e}")
     else:
-        data = {'id': transcription_id}
+        # If new file, set created_at
+        status_data["created_at"] = now
     
-    # Update status info
-    data['status'] = status
-    data['progress'] = progress
-    data['updated_at'] = datetime.now().isoformat()
-    
-    if error:
-        data['error'] = error
-    
-    if result:
-        data['result'] = result
-    
-    # Save updated status
+    # Write to file
     with open(status_file, 'w') as f:
-        json.dump(data, f)
+        json.dump(status_data, f, indent=2)
+    
+    return status_data
 
 @app.route('/transcriptions/<transcription_id>')
 def get_transcription(transcription_id):
@@ -408,6 +495,26 @@ def get_status(transcription_id):
 def view_transcription(transcription_id):
     """View a specific transcription"""
     return render_template('view.html', transcription_id=transcription_id)
+
+@app.route('/format_notes/<transcription_id>')
+def get_meeting_notes(transcription_id):
+    """Generate meeting notes from a transcription"""
+    transcription_file = os.path.join(TRANSCRIPTION_FOLDER, f"{transcription_id}.json")
+    
+    if not os.path.exists(transcription_file):
+        return jsonify({'error': 'Transcription not found'}), 404
+    
+    with open(transcription_file, 'r') as f:
+        transcription_data = json.load(f)
+    
+    meeting_notes = format_meeting_notes(transcription_data)
+    
+    # Save the meeting notes
+    notes_file = os.path.join(TRANSCRIPTION_FOLDER, f"{transcription_id}_notes.json")
+    with open(notes_file, 'w') as f:
+        json.dump(meeting_notes, f, indent=2)
+    
+    return jsonify(meeting_notes)
 
 @app.route('/languages')
 def get_languages():
