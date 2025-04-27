@@ -82,8 +82,15 @@ def transcribe_audio(audio_path, model_size, language=None, chunk_size=30):
     import whisper
     import torch
     import numpy as np
-    from pydub import AudioSegment
     import os
+    
+    # Make sure pydub is installed
+    try:
+        from pydub import AudioSegment
+    except ImportError:
+        print("Installing pydub for audio processing...")
+        subprocess.call([sys.executable, "-m", "pip", "install", "pydub"])
+        from pydub import AudioSegment
     
     # Get audio duration
     audio = AudioSegment.from_file(audio_path)
@@ -341,12 +348,14 @@ def upload_file():
 def process_file_background(transcription_id, file_path, file_extension, model_size, language, chunk_size):
     """Process file in background thread"""
     try:
+        print(f"Starting background processing for {transcription_id} with file {file_path}")
         # Update status to processing
         update_status(transcription_id, "processing", 10)
         
         # Extract audio if it's a video file
         audio_path = file_path
-        if file_extension in ['mp4', 'mov', 'avi', 'mkv', 'webm']:
+        print(f"File extension: {file_extension}")
+        if file_extension.lower() in ['.mp4', '.mov', '.avi', '.mkv', '.webm']:
             update_status(transcription_id, "extracting_audio", 20)
             audio_path = os.path.join(TEMP_FOLDER, f"{transcription_id}.wav")
             success = extract_audio(file_path, audio_path)
