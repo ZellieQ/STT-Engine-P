@@ -111,9 +111,11 @@ def transcribe_audio(audio_path, model_size, language=None, chunk_size=30):
         print(f"Invalid model size: {model_size}, defaulting to tiny")
         model_size = 'tiny'
     
-    # Load model with memory optimization
+    # Load model
     print(f"Loading Whisper model: {model_size}")
-    model = whisper.load_model(model_size, device='cpu')  # Force CPU to save memory
+    # Use CUDA if available, otherwise CPU
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = whisper.load_model(model_size, device=device)
     
     # Prepare options
     options = {}
@@ -334,7 +336,7 @@ def upload_file():
         return jsonify({'error': 'File type not allowed'}), 400
     
     # Get parameters
-    model_size = request.form.get('model_size', 'tiny')  # Default to tiny to save memory
+    model_size = request.form.get('model_size', 'base')  # Can use base model with upgraded Render tier
     language = request.form.get('language', 'auto')
     chunk_size = int(request.form.get('chunk_size', '30'))  # Chunk size in minutes
     
