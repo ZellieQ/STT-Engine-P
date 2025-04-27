@@ -83,6 +83,11 @@ def transcribe_audio(audio_path, model_size, language=None, chunk_size=30):
     import torch
     import numpy as np
     import os
+    import gc
+    
+    # Force garbage collection to free memory
+    gc.collect()
+    torch.cuda.empty_cache() if torch.cuda.is_available() else None
     
     # Make sure pydub is installed
     try:
@@ -100,9 +105,15 @@ def transcribe_audio(audio_path, model_size, language=None, chunk_size=30):
     # Determine if we need chunking (for files longer than 10 minutes)
     use_chunking = duration_seconds > (chunk_size * 60)
     
-    # Load model
+    # Ensure model_size is valid and default to tiny if not
+    valid_models = ['tiny', 'base', 'small', 'medium', 'large']
+    if model_size not in valid_models:
+        print(f"Invalid model size: {model_size}, defaulting to tiny")
+        model_size = 'tiny'
+    
+    # Load model with memory optimization
     print(f"Loading Whisper model: {model_size}")
-    model = whisper.load_model(model_size)
+    model = whisper.load_model(model_size, device='cpu')  # Force CPU to save memory
     
     # Prepare options
     options = {}
@@ -112,14 +123,43 @@ def transcribe_audio(audio_path, model_size, language=None, chunk_size=30):
     # For shorter files, process normally
     if not use_chunking:
         print("Processing entire audio file at once")
-        result = model.transcribe(
-            audio_path,
-            verbose=True,
-            fp16=False,
-            temperature=0,
-            **options
-        )
-        return result
+        try:
+            # Use lower precision to save memory
+            result = model.transcribe(
+                audio_path,
+                verbose=True,
+                fp16=False,
+                temperature=0,
+                **options
+            )
+            # Clean up to free memory
+            del model
+            gc.collect()
+            torch.cuda.empty_cache() if torch.cuda.is_available() else None
+            return result
+        except Exception as e:
+            print(f"Error during transcription: {e}")
+            # Try with even more memory optimization if it fails
+            del model
+            gc.collect()
+            torch.cuda.empty_cache() if torch.cuda.is_available() else None
+            
+            # Try again with tiny model if not already using it
+            if model_size != 'tiny':
+                print("Retrying with tiny model to save memory")
+                model = whisper.load_model('tiny', device='cpu')
+                result = model.transcribe(
+                    audio_path,
+                    verbose=True,
+                    fp16=False,
+                    temperature=0,
+                    **options
+                )
+                del model
+                gc.collect()
+                return result
+            else:
+                raise
     
     # For longer files, process in chunks
     print(f"Processing audio in {chunk_size}-minute chunks due to length")
@@ -294,7 +334,7 @@ def upload_file():
         return jsonify({'error': 'File type not allowed'}), 400
     
     # Get parameters
-    model_size = request.form.get('model_size', 'base')
+    model_size = request.form.get('model_size', 'tiny')  # Default to tiny to save memory
     language = request.form.get('language', 'auto')
     chunk_size = int(request.form.get('chunk_size', '30'))  # Chunk size in minutes
     
